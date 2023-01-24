@@ -66,7 +66,18 @@ private extension RicohLiveView {
     }
     
     func _apply(_ error: Swift.Error) {
-        self._set(state: .error(.unknown))
+        var ricohLiveViewError: Error
+        let nsError = error as NSError
+        switch nsError.domain {
+        case NSURLErrorDomain:
+            switch nsError.code {
+            case -1: ricohLiveViewError = .canNotPerformOperation
+            case -999: ricohLiveViewError = .canceled
+            default: ricohLiveViewError = .unknown
+            }
+        default: ricohLiveViewError = .unknown
+        }
+        self._set(state: .error(ricohLiveViewError))
     }
     
 }
