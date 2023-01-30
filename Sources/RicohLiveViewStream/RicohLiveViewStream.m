@@ -13,11 +13,10 @@ const Byte EOI_MARKER[] = {0xFF, 0xD9};
  */
 @interface RicohLiveViewStream() <NSURLSessionDataDelegate, NSURLSessionTaskDelegate>
 {
-    NSMutableData *_buffer;
-    NSMutableArray *_frameArray;
-    NSURLSessionDataTask *_task;
+    NSURLSession* _session;
+    NSURLSessionDataTask* _task;
+    NSMutableData* _buffer;
     void (^_onBuffered)(UIImage *frame, NSError* error);
-    BOOL _isContinue;
 }
 @end
 
@@ -40,11 +39,19 @@ const Byte EOI_MARKER[] = {0xFF, 0xD9};
 - (id)init
 {
     if (self = [super init]) {
+        NSURLSessionConfiguration* config = [NSURLSessionConfiguration defaultSessionConfiguration];
+        NSOperationQueue* queue = [NSOperationQueue new];
+        queue.maxConcurrentOperationCount = 1;
+        _session = [NSURLSession sessionWithConfiguration:config
+                                                 delegate:self
+                                            delegateQueue:queue];
         _buffer = [NSMutableData data];
-        _frameArray = [NSMutableArray array];
-        _isContinue = NO;
     }
     return self;
+}
+
+- (void)dealloc {
+    [_session invalidateAndCancel];
 }
 
 /**
@@ -52,7 +59,7 @@ const Byte EOI_MARKER[] = {0xFF, 0xD9};
  */
 - (void)startWithHost:(NSString*)host sessionId:(NSString*)sessionId
 {
-    if (!_isContinue) {
+    if (_task == nil) {
         NSURL *url = [NSURL URLWithString:[NSString stringWithFormat:@"http://%@/osc/commands/execute", host]];
 
         // Create the url-request.
@@ -72,19 +79,10 @@ const Byte EOI_MARKER[] = {0xFF, 0xD9};
         // Set the request-body.
         [request setHTTPBody:[NSJSONSerialization dataWithJSONObject:body options:0 error:nil]];
         
-        NSURLSessionConfiguration* config = [NSURLSessionConfiguration defaultSessionConfiguration];
-        // config.timeoutIntervalForRequest = 20;
-        // config.timeoutIntervalForResource = 20;
-        NSOperationQueue* queue = [NSOperationQueue new];
-        queue.maxConcurrentOperationCount = 1;
-        NSURLSession* session = [NSURLSession sessionWithConfiguration:config
-                                                              delegate:self
-                                                         delegateQueue:queue];
         
         // Start data acquisition task
-        _task = [session dataTaskWithRequest:request];
+        _task = [_session dataTaskWithRequest:request];
         [_task resume];
-        _isContinue = YES;
     }
 }
 
@@ -94,6 +92,7 @@ const Byte EOI_MARKER[] = {0xFF, 0xD9};
 - (void)cancel
 {
     [_task cancel];
+    _task = nil;
 }
 
 /**
@@ -106,6 +105,9 @@ const Byte EOI_MARKER[] = {0xFF, 0xD9};
           dataTask:(NSURLSessionDataTask *)dataTask
     didReceiveData:(NSData *)data
 {
+    if(_task != dataTask) {
+        return;
+    }
     [_buffer appendData:data];
     Byte b1[2];
 
@@ -185,7 +187,11 @@ const Byte EOI_MARKER[] = {0xFF, 0xD9};
               task:(NSURLSessionTask *)task
 didCompleteWithError:(NSError *)error
 {
-    _isContinue = NO;
+    if(_task != task) {
+        return;
+    }
+    [_buffer setLength:0];
+    _task = nil;
     if(error != nil) {
         BOOL isCancelled = (([error.domain isEqualToString:NSURLErrorDomain] == YES) && (error.code == NSURLErrorCancelled));
         if(isCancelled == NO) {
@@ -197,6 +203,9 @@ didCompleteWithError:(NSError *)error
                 }
             });
         }
+    } else {
+        _task = [_session dataTaskWithRequest:task.originalRequest];
+        [_task resume];
     }
 }
 
