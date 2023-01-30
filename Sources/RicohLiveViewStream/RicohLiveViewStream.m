@@ -57,6 +57,7 @@ const Byte EOI_MARKER[] = {0xFF, 0xD9};
 
         // Create the url-request.
         NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+        // request.timeoutInterval = 20;
 
         // Set the method(HTTP-POST)
         [request setHTTPMethod:@"POST"];
@@ -72,6 +73,8 @@ const Byte EOI_MARKER[] = {0xFF, 0xD9};
         [request setHTTPBody:[NSJSONSerialization dataWithJSONObject:body options:0 error:nil]];
         
         NSURLSessionConfiguration* config = [NSURLSessionConfiguration defaultSessionConfiguration];
+        // config.timeoutIntervalForRequest = 20;
+        // config.timeoutIntervalForResource = 20;
         NSOperationQueue* queue = [NSOperationQueue new];
         queue.maxConcurrentOperationCount = 1;
         NSURLSession* session = [NSURLSession sessionWithConfiguration:config
@@ -136,19 +139,33 @@ const Byte EOI_MARKER[] = {0xFF, 0xD9};
 
         // Exit process if EOI not found
         if (eoi == 0) {
+            if([dataTask.response isKindOfClass:NSHTTPURLResponse.class] == YES) {
+                NSHTTPURLResponse* response = (NSHTTPURLResponse*)dataTask.response;
+                if((response.statusCode < 200) || (response.statusCode > 299)) {
+                    __weak typeof(self) weakSelf = self;
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        typeof(self) strongSelf = weakSelf;
+                        if((strongSelf != nil) && (strongSelf->_onBuffered != nil)) {
+                            strongSelf->_onBuffered(nil, nil);
+                        }
+                    });
+                }
+            }
             return;
         }
         NSData *frameData = [_buffer subdataWithRange:NSMakeRange(soi, eoi - soi)];
 
         // Draw
         UIImage* frame = [UIImage imageWithData:frameData];
-        __weak typeof(self) weakSelf = self;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            typeof(self) strongSelf = weakSelf;
-            if(strongSelf != nil) {
-                strongSelf->_onBuffered(frame, nil);
-            }
-        });
+        if(frame != nil) {
+            __weak typeof(self) weakSelf = self;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                typeof(self) strongSelf = weakSelf;
+                if((strongSelf != nil) && (strongSelf->_onBuffered != nil)) {
+                    strongSelf->_onBuffered(frame, nil);
+                }
+            });
+        }
             
         // Delete used parts of data
         NSUInteger remainLength = _buffer.length - eoi - 2;
@@ -168,16 +185,19 @@ const Byte EOI_MARKER[] = {0xFF, 0xD9};
               task:(NSURLSessionTask *)task
 didCompleteWithError:(NSError *)error
 {
-    // Called when session expires
-    [session invalidateAndCancel];
     _isContinue = NO;
-    __weak typeof(self) weakSelf = self;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        typeof(self) strongSelf = weakSelf;
-        if(strongSelf != nil) {
-            strongSelf->_onBuffered(nil, error);
+    if(error != nil) {
+        BOOL isCancelled = (([error.domain isEqualToString:NSURLErrorDomain] == YES) && (error.code == NSURLErrorCancelled));
+        if(isCancelled == NO) {
+            __weak typeof(self) weakSelf = self;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                typeof(self) strongSelf = weakSelf;
+                if((strongSelf != nil) && (strongSelf->_onBuffered != nil)) {
+                    strongSelf->_onBuffered(nil, error);
+                }
+            });
         }
-    });
+    }
 }
 
 @end

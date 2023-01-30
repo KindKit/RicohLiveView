@@ -9,8 +9,9 @@ public extension RicohLiveView {
     enum Error {
         
         case unknown
-        case canceled
-        case canNotPerformOperation
+        case noConnection
+        case connectionLost
+        case invalidResponse
         
     }
     

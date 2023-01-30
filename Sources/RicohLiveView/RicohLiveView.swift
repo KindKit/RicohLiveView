@@ -15,28 +15,18 @@ public final class RicohLiveView : UIImageView {
     
     public weak var delegate: IRicohLiveViewDelegate?
     public var sessionId: String?
-    public private(set) var state: State
-    private let _stream: RicohLiveViewStream
+    public private(set) var state: State = .idle
+    private let _stream = RicohLiveViewStream()
     
-    public override init(frame: CGRect) {
-        self.state = .idle
-        self._stream = RicohLiveViewStream()
-        super.init(frame: frame)
-        self._setup()
-    }
-    
-    public required init?(coder: NSCoder) {
-        self.state = .idle
-        self._stream = RicohLiveViewStream()
-        super.init(coder: coder)
-        self._setup()
+    deinit {
+        self._stop()
     }
     
 }
 
 private extension RicohLiveView {
     
-    func _setup() {
+    func _start(host: String) {
         self._stream.setDelegate({ [weak self] frame, error in
             guard let self = self else { return }
             if let error = error {
@@ -44,9 +34,15 @@ private extension RicohLiveView {
             } else if let frame = frame {
                 self._apply(frame)
             } else {
-                self._apply(NSError(domain: NSURLErrorDomain, code: NSURLErrorUnknown))
+                self._apply(.invalidResponse)
             }
         })
+        self._stream.start(withHost: host, sessionId: self.sessionId)
+    }
+    
+    func _stop() {
+        self._stream.setDelegate(nil)
+        self._stream.cancel()
     }
     
     func _set(state: State) {
@@ -66,18 +62,27 @@ private extension RicohLiveView {
     }
     
     func _apply(_ error: Swift.Error) {
-        var ricohLiveViewError: Error
         let nsError = error as NSError
         switch nsError.domain {
         case NSURLErrorDomain:
             switch nsError.code {
-            case -1: ricohLiveViewError = .canNotPerformOperation
-            case -999: ricohLiveViewError = .canceled
-            default: ricohLiveViewError = .unknown
+            case NSURLErrorTimedOut: fallthrough
+            case NSURLErrorCannotFindHost: fallthrough
+            case NSURLErrorCannotConnectToHost: fallthrough
+            case NSURLErrorNotConnectedToInternet:
+                self._apply(.noConnection)
+            case NSURLErrorNetworkConnectionLost:
+                self._apply(.connectionLost)
+            default:
+                self._apply(.unknown)
             }
-        default: ricohLiveViewError = .unknown
+        default:
+            self._apply(.unknown)
         }
-        self._set(state: .error(ricohLiveViewError))
+    }
+    
+    func _apply(_ error: Error) {
+        self._set(state: .error(error))
     }
     
 }
@@ -87,8 +92,8 @@ public extension RicohLiveView {
     func startStreaming(host: String = "192.168.1.1") {
         switch self.state {
         case .idle, .error:
+            self._start(host: host)
             self._set(state: .connecting)
-            self._stream.start(withHost: host, sessionId: self.sessionId)
         case .connecting, .streaming:
             break
         }
@@ -99,7 +104,7 @@ public extension RicohLiveView {
         case .idle, .error:
             break
         case .connecting, .streaming:
-            self._stream.cancel()
+            self._stop()
             self._set(state: .idle)
         }
     }
